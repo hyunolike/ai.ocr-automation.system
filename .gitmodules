@@ -1,0 +1,6 @@
+[submodule "backend.scheduler"]
+	path = backend.scheduler
+	url = https://github.com/hyunolike/ai.ocr-automation.system-backend.scheduler.git
+[submodule "backend"]
+	path = backend
+	url = https://github.com/hyunolike/ai.ocr-automation.system-backend.git
