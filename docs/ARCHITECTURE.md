@@ -113,14 +113,21 @@ OCR 은 수 초에서 수십 초가 걸린다. 한 트랜잭션 안에서 돌리
 
 ```
 claim()      ── 짧은 트랜잭션 ── PENDING → PROCESSING
-extract()    ── 트랜잭션 밖  ── 느린 작업
+submit()     ── 워커 풀에 위임 → 여기서 HTTP 응답(202)이 나간다
+extract()    ── 워커 스레드, 트랜잭션 밖 ── 느린 작업
 complete()   ── 짧은 트랜잭션 ── PROCESSING → COMPLETED
 ```
+
+접수와 처리를 나눈 것이 핵심이다. 동기로 끝까지 처리하면 `배치 크기 × 건당 소요` 가
+호출자(스케줄러)의 읽기 타임아웃을 넘고, 요청이 끊긴 뒤에도 처리는 계속 돌아
+다음 주기 요청과 겹친다. **바운드 큐 + `AbortPolicy`** 가 백프레셔 역할을 하고,
+큐에 넣지 못한 문서는 `releaseClaim()` 으로 되돌린다 — `fail()` 과 달리 재시도 횟수를
+올리지 않으므로 큐가 붐빌 때마다 멀쩡한 문서가 `FAILED` 로 밀려나지 않는다.
 
 | 클래스 | 트랜잭션 | 역할 |
 |---|---|---|
 | `DocumentApplicationService` | 있음 | 등록·조회. 짧고 단순 |
-| `DocumentProcessingService` | **없음** | 선점 → OCR → 기록 순서만 잡는다 |
+| `DocumentProcessingService` | **없음** | 선점 → 워커 풀 위임 순서만 잡는다 |
 | `DocumentTransitionService` | `REQUIRES_NEW` | 상태 전이만 |
 
 전이 메서드를 `DocumentProcessingService` 안에 두지 않은 이유:
