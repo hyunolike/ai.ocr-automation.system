@@ -95,7 +95,7 @@ git submodule update --init --recursive
 # (선택) 운영 프로파일로 돌릴 때만 필요. local 프로파일은 H2 를 쓴다
 docker compose up -d postgres
 
-# 터미널 1 — 설정 서버
+# 터미널 1 — 설정 서버 (backend/scheduler 가 기본 인증으로 접속한다)
 cd config.server && ./gradlew bootRun
 
 # 터미널 2 — 백엔드
@@ -111,6 +111,7 @@ PostgreSQL 도 Tesseract 도 없이 파이프라인 전체를 돌려볼 수 있�
 ### 3. 동작 확인
 
 ```bash
+# API 키가 없으면 내부 경로로 하나 발급받아 진행한다
 ./scripts/upload-sample.sh path/to/scan.png
 
 # 소유자를 바꿔 격리를 확인해 볼 수 있다
@@ -147,8 +148,9 @@ SPRING_PROFILES_ACTIVE=default ./gradlew bootRun
 | `GET` | `/api/v1/documents?status=` | 목록 (상태 필터) |
 | `GET` | `/api/v1/documents/{id}/text` | 추출된 전체 텍스트 |
 
-모든 공개 API 는 `X-Owner-Id` 헤더를 요구한다.
-**이 헤더는 인증이 아니라** 소유자 격리를 위한 자리표시자이며, Phase 1.3 에서 교체된다.
+모든 공개 API 는 **API 키**를 요구한다(`X-API-Key` 또는 `Authorization: Bearer`).
+키가 소유자를 결정하며, 요청 어디에도 소유자를 지정하는 자리가 없다.
+내부 API 는 공유 토큰(`X-Internal-Token`)으로 막혀 있다.
 
 자세한 내용은 [backend README](https://github.com/hyunolike/ai.ocr-automation.system-backend#-api) 참고.
 
@@ -202,7 +204,9 @@ git submodule update --remote --merge
 **초기 구조를 잡은 상태다.** 파이프라인은 끝까지 동작하지만,
 실사용 전에 해결해야 할 것들이 남아 있다.
 
-- **인증이 없다** — 소유자 격리는 들어왔지만 `X-Owner-Id` 헤더를 그대로 믿는다. `/internal` API 와 설정 서버도 열려 있다
+- **HTTPS 가 없다** — API 키와 내부 토큰이 평문으로 오간다
+- **개발 기본 자격증명이 있다** — 쓰이면 기동 경고가 뜨지만, 운영에서 환경변수를 지정하지 않으면 보호가 없다
+- **운영자 권한이 서비스 간 토큰과 같다** — 스케줄러가 쓰는 토큰으로 API 키도 발급할 수 있다
 - **스케줄러 다중화 시 잡이 중복 실행된다** — 분산 락(ShedLock)이 없다
 - **설정 값이 평문이다** — DB 비밀번호 암호화(`{cipher}`)가 없다
 - **컨테이너 이미지가 없다** — 각 서비스에 Dockerfile 과 CI 가 필요하다
@@ -220,12 +224,11 @@ git submodule update --remote --merge
 | Phase | 목표 | 주요 항목 |
 |---|---|---|
 | ~~**0**~~ | ~~확인된 결함 수정~~ | ✅ 완료 — 배치 타임아웃 초과 외 3건 |
-| **1** | 운영 투입 차단 해소 | ~~파이프라인 비동기화~~ ✅, ~~소유자 도입~~ ✅, **인증·인가 ← 다음**, 파일 검증, 설정 암호화 |
+| **1** | 운영 투입 차단 해소 | ~~비동기화~~ ✅, ~~소유자~~ ✅, ~~인증·인가~~ ✅, **파일 검증 ← 다음**, 설정 암호화 |
 | **2** | 배포 가능하게 | 컨테이너 이미지, CI, 관측성, API 문서 |
 | **3** | 인식 정확도 | 이미지 전처리, 신뢰도 수집, `NEEDS_REVIEW` 상태, PDF 페이지 처리 |
 | **4** | 규모 | S3 어댑터, 보관 정책, 큐 전환 판단 |
 | **5** | 구조화 추출 | 텍스트가 아니라 데이터를 준다 |
 
-**다음에 할 일은 1.3 인증·인가**다. 소유자 격리는 들어왔지만 소유자를 *증명*하는
-장치가 없다 — 지금은 `X-Owner-Id` 헤더를 그대로 믿는다. `/internal` API 도 공개 포트에
-열려 있어 누구나 배치를 돌릴 수 있다.
+**다음에 할 일은 1.4 파일 내용 검증과 1.5 설정 값 암호화**다. 지금은 업로드 파일의
+`Content-Type` 헤더만 믿으므로 확장자만 바꾼 파일이 통과하고, 설정 값은 평문이다.
