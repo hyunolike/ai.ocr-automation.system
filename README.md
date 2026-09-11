@@ -1,82 +1,84 @@
-# OCR 자동화 시스템
+# OCR Automation System
 
-> 문서를 올리면 OCR로 텍스트를 뽑아 보관하는 시스템.
-> **Spring Boot + Tesseract + Spring Cloud Config**로 구성한 세 개의 서비스.
+**English** | [한국어](README.ko.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md)
 
-OCR은 느리고, 자주 실패하고, 엔진이 바뀐다. 이 세 가지를 전제로 두고
-**느린 작업이 요청을 붙잡지 않게**, **실패해도 문서가 유실되지 않게**,
-**엔진을 갈아끼워도 비즈니스 로직이 그대로이게** 만드는 것이 목표다.
+> Upload a document, get its text extracted by OCR and kept.
+> Three services built on **Spring Boot + Tesseract + Spring Cloud Config**.
 
-이 저장소는 **엄브렐라 저장소**다. 실제 코드는 서브모듈로 연결된 서비스 저장소에 있고,
-여기에는 시스템 전체를 어떻게 맞춰 돌리는지가 들어 있다.
+OCR is slow, it fails often, and the engine gets replaced. Taking those three as
+given, the goal is to make sure **slow work never pins a request**, **a failure never
+loses a document**, and **swapping the engine leaves the business logic untouched**.
 
-<br>
-
-## 🎯 설계 목표
-
-- **경계마다 책임을 하나씩** — 설정은 설정 서버가, "언제"는 스케줄러가, "어떻게"는 backend가
-- **바뀔 것을 포트로 끊는다** — OCR 엔진과 스토리지는 어댑터 교체로 바뀐다
-- **실패를 전제로 설계한다** — 인스턴스가 죽어도 문서는 회수되어 다시 처리된다
-- **실수로 열리는 것보다 실수로 막히는 편이 낫다** — 규칙에 없는 경로는 거절한다
+This is the **umbrella repository**. The actual code lives in the service repositories
+linked as submodules; what's here is how the whole thing fits together and runs.
 
 <br>
 
-## 🧩 구성
+## 🎯 Design Goals
 
-| 서비스 | 포트 | 역할 | 저장소 |
+- **One responsibility per boundary** — configuration to the config server, "when" to the scheduler, "how" to the backend
+- **Cut what will change behind ports** — the OCR engine and storage change by swapping adapters
+- **Design for failure** — even when an instance dies, documents get recovered and reprocessed
+- **Better to fail closed than to fail open** — a path without a rule is denied
+
+<br>
+
+## 🧩 Components
+
+| Service | Port | Role | Repository |
 |---|---|---|---|
-| **config.server** | 8888 | 중앙 설정 관리 | [ai.ocr-automation.system-config.server](https://github.com/hyunolike/ai.ocr-automation.system-config.server) |
-| **backend** | 8080 | 문서 API + OCR 처리 | [ai.ocr-automation.system-backend](https://github.com/hyunolike/ai.ocr-automation.system-backend) |
-| **backend.scheduler** | 8081 | 배치 잡 트리거 | [ai.ocr-automation.system-backend.scheduler](https://github.com/hyunolike/ai.ocr-automation.system-backend.scheduler) |
+| **config.server** | 8888 | Central configuration | [ai.ocr-automation.system-config.server](https://github.com/hyunolike/ai.ocr-automation.system-config.server) |
+| **backend** | 8080 | Document API + OCR processing | [ai.ocr-automation.system-backend](https://github.com/hyunolike/ai.ocr-automation.system-backend) |
+| **backend.scheduler** | 8081 | Batch job triggers | [ai.ocr-automation.system-backend.scheduler](https://github.com/hyunolike/ai.ocr-automation.system-backend.scheduler) |
 
 ```mermaid
 flowchart TB
-    C["Client"] -->|"API 키"| BE
+    C["Client"] -->|"API key"| BE
 
-    subgraph SYS["OCR 자동화 시스템"]
+    subgraph SYS["OCR Automation System"]
         CS["ocr-config-server<br/>:8888"]
         BE["ocr-backend<br/>:8080"]
         SCH["ocr-scheduler<br/>:8081"]
     end
 
-    CS -.->|"기동 시 설정 배포"| BE
-    CS -.->|"기동 시 설정 배포"| SCH
-    SCH -->|"내부 토큰"| BE
+    CS -.->|"config on startup"| BE
+    CS -.->|"config on startup"| SCH
+    SCH -->|"internal token"| BE
     BE --> DB[("PostgreSQL")]
-    BE --> FS[("문서 스토리지")]
+    BE --> FS[("Document storage")]
     BE --> OCR["Tesseract"]
 ```
 
-### 왜 이렇게 나눴나
+### Why split it this way
 
-| 경계 | 이유 |
+| Boundary | Reason |
 |---|---|
-| 설정을 서비스 밖으로 | DB 접속 정보가 저장소마다 흩어지지 않고, 잡 주기를 재배포 없이 바꾼다 |
-| 스케줄러를 backend 밖으로 | Tesseract 네이티브 의존성을 backend 한곳에만 둔다. 처리량이 필요하면 backend만 늘린다 |
-| OCR 실행은 backend 안에 | 스케줄러는 **"언제"만** 알고 **"어떻게"는 모른다**. 엔진을 바꿔도 스케줄러는 그대로다 |
+| Configuration outside the services | Database credentials stop scattering across repositories, and job cadence changes without a redeploy |
+| Scheduler outside the backend | The Tesseract native dependency stays in one place. Need throughput? Scale only the backend |
+| OCR execution inside the backend | The scheduler knows **only "when"** and **nothing of "how"**. Swap the engine and the scheduler is untouched |
 
 <br>
 
-## 🚀 기능 요구사항
+## 🚀 Functional Requirements
 
-### 문서 처리
+### Document processing
 
-- 이미지(PNG/JPEG/TIFF) 또는 PDF를 올리면 OCR 대기열에 오른다.
-- 파일 형식은 **헤더가 아니라 내용(매직 바이트)으로 판단한다.**
-- 스케줄러가 주기적으로 대기 문서를 backend 워커 풀에 **접수**시킨다.
-- 처리에 실패하면 재시도하고, 한도를 넘기면 `FAILED`로 확정한다.
-- 처리 도중 인스턴스가 죽어 `PROCESSING`에 멈춘 문서는 회수해 다시 처리한다.
+- Upload an image (PNG/JPEG/TIFF) or a PDF and it joins the OCR queue.
+- File type is decided from **its content (magic bytes), not the header.**
+- The scheduler periodically has the backend **accept** pending documents into its worker pool.
+- Failures are retried; past the limit, the document is marked `FAILED`.
+- Documents stuck in `PROCESSING` because an instance died get recovered and reprocessed.
 
-### 인증과 격리
+### Authentication and isolation
 
-- 공개 API는 **API 키**를 요구한다. 키가 소유자를 결정한다.
-- 모든 조회는 소유자 범위로 좁혀진다. 남의 문서는 **404**로 응답한다.
-- 서비스 간 호출(`/internal`)은 공유 토큰으로 막는다.
-- 설정 서버는 기본 인증으로 막고, 값은 `{cipher}`로 암호화할 수 있다.
+- Public APIs require an **API key**. The key determines the owner.
+- Every query is scoped to its owner. Someone else's document answers **404**.
+- Service-to-service calls (`/internal`) are guarded by a shared token.
+- The config server is behind basic auth, and values can be encrypted with `{cipher}`.
 
 <br>
 
-## 🔄 문서 한 건의 흐름
+## 🔄 How a document flows
 
 ```mermaid
 sequenceDiagram
@@ -85,109 +87,111 @@ sequenceDiagram
     participant SCH as scheduler
     participant E as Tesseract
 
-    C->>BE: POST /api/v1/documents (multipart + API 키)
-    BE->>BE: 형식 검증(매직 바이트) → 저장 → PENDING
+    C->>BE: POST /api/v1/documents (multipart + API key)
+    BE->>BE: verify type (magic bytes) → store → PENDING
     BE-->>C: 201 { id, status: PENDING }
 
-    Note over SCH: 30초마다
+    Note over SCH: every 30s
     SCH->>BE: POST /internal/v1/ocr/process-pending
-    BE->>BE: PROCESSING 선점 (짧은 트랜잭션)
-    BE-->>SCH: 202 { queued, rejected } ── 즉시 반환
-    BE->>E: 텍스트 추출 (워커 스레드, 트랜잭션 밖)
-    BE->>BE: COMPLETED 기록 (짧은 트랜잭션)
+    BE->>BE: claim as PROCESSING (short transaction)
+    BE-->>SCH: 202 { queued, rejected } ── returns at once
+    BE->>E: extract text (worker thread, outside a transaction)
+    BE->>BE: record COMPLETED (short transaction)
 
     C->>BE: GET /api/v1/documents/{id}/text
-    BE-->>C: 추출된 텍스트
+    BE-->>C: extracted text
 ```
 
 ```
 PENDING ──▶ PROCESSING ──▶ COMPLETED
    ▲             │
-   │             └──▶ FAILED (재시도 한도 소진)
+   │             └──▶ FAILED (retries exhausted)
    └─────────────┘
-     재시도 여유가 남아 있으면 되돌아간다
+     goes back while retries remain
 ```
 
 <br>
 
-## 📄 주요 API
+## 📄 Main API
 
-모든 공개 API는 **API 키**를 요구한다(`X-API-Key` 또는 `Authorization: Bearer`).
-키가 소유자를 결정하며, 요청 어디에도 소유자를 지정하는 자리가 없다.
+Every public API requires an **API key** (`X-API-Key` or `Authorization: Bearer`).
+The key determines the owner; nowhere in a request is there a place to name one.
 
-| Method | Path | 설명 |
+| Method | Path | Description |
 |---|---|---|
-| `POST` | `/api/v1/documents` | 문서 업로드 (multipart, 필드명 `file`) |
-| `GET` | `/api/v1/documents/{id}` | 상태·결과 요약 |
-| `GET` | `/api/v1/documents?status=` | 목록 (상태 필터) |
-| `GET` | `/api/v1/documents/{id}/text` | 추출된 전체 텍스트 |
+| `POST` | `/api/v1/documents` | Upload (multipart, field `file`) |
+| `GET` | `/api/v1/documents/{id}` | Status and result summary |
+| `GET` | `/api/v1/documents?status=` | List (status filter) |
+| `GET` | `/api/v1/documents/{id}/text` | Full extracted text |
 
-내부 API는 공유 토큰(`X-Internal-Token`)으로 막혀 있다.
-자세한 내용은 [backend README](https://github.com/hyunolike/ai.ocr-automation.system-backend#-인터페이스-규격) 참고.
-
-<br>
-
-## 📐 프로그래밍 요구사항
-
-- Java 21, Spring Boot 3.5.16으로 세 서비스를 통일한다.
-- 각 서비스는 **독립 저장소**이며, 이 저장소가 서브모듈로 묶는다.
-- 설정은 모두 설정 서버가 내려준다. 각 서비스의 `application.yml`에는
-  **"설정 서버를 어떻게 찾을지"만** 둔다.
-- 스키마 출처는 **Flyway 하나**다. JPA는 `validate`만 한다.
-- 기동 순서는 **설정 서버 → backend → scheduler**다.
-- **커밋 단위는 아래 기능 목록 단위로 한다.**
+Internal APIs are guarded by a shared token (`X-Internal-Token`).
+See the [backend README](https://github.com/hyunolike/ai.ocr-automation.system-backend#-interface-specification) for details.
 
 <br>
 
-## ✅ 구현할 기능 목록
+## 📐 Programming Requirements
 
-### Phase 0 — 확인된 결함
-
-- [x] 배치가 순차 처리라 스케줄러 타임아웃을 넘던 문제
-- [x] 자기 호출로 `@Transactional`이 적용되지 않던 문제
-- [x] 실패한 문서를 재업로드해도 재처리되지 않던 문제
-- [x] 코드가 읽지 않는 죽은 설정 키
-
-### Phase 1 — 운영 투입 차단 해소
-
-- [x] 처리 파이프라인 비동기화 (바운드 큐 + 백프레셔)
-- [x] 문서에 소유자 도입 (모든 공개 조회에 소유자 조건)
-- [x] 인증·인가 (API 키 / 내부 토큰 / 설정 서버 기본 인증)
-- [x] 업로드 파일 내용 검증 (매직 바이트 + PDF 검사)
-- [x] 설정 값 암호화 기능
-
-### Phase 2 — 배포 가능하게
-
-- [ ] 컨테이너 이미지 (tesseract는 backend 이미지에만)
-- [ ] 전체 docker-compose 구성
-- [ ] CI (빌드·테스트, 서브모듈 조합 검증)
-- [ ] 관측성 (대기 문서 수, 처리 시간, 큐 포화, 회수 건수)
-- [ ] OpenAPI 문서 자동 생성
-
-### Phase 3 — 인식 정확도
-
-- [ ] 이미지 전처리 (해상도 정규화·이진화·기울기 보정)
-- [ ] Tesseract 단어 단위 신뢰도 수집
-- [ ] `NEEDS_REVIEW` 상태 — 사람이 봐야 할 문서를 가른다
-- [ ] PDF 페이지 단위 처리
-
-### Phase 4 — 규모
-
-- [ ] S3 스토리지 어댑터
-- [ ] 문서 보관 기간 정책과 정리 배치
-- [ ] 메시지 큐 전환 판단
-
-### Phase 5 — 구조화 추출
-
-- [ ] 문서 타입 분류
-- [ ] 추출 텍스트에서 구조화 필드 뽑기
-- [ ] 비전 모델 어댑터와 비교
+- Java 21 and Spring Boot 3.5.16 across all three services.
+- Each service is its **own repository**; this one binds them as submodules.
+- All configuration comes from the config server. Each service's `application.yml`
+  holds **only "how to find the config server."**
+- The schema has a **single source, Flyway.** JPA only `validate`s.
+- Startup order is **config server → backend → scheduler**.
+- **Commit granularity follows the feature checklist below.**
 
 <br>
 
-## 📤 실행 결과
+## ✅ Feature Checklist
 
-### 업로드 → 처리 → 조회
+### Phase 0 — Defects found
+
+- [x] Batches processed sequentially, exceeding the scheduler's timeout
+- [x] `@Transactional` not applied because of a self-invocation
+- [x] Re-uploading a failed document did nothing
+- [x] A configuration key no code reads
+
+### Phase 1 — Clearing what blocks production
+
+- [x] Asynchronous processing pipeline (bounded queue + backpressure)
+- [x] Document ownership (owner condition on every public query)
+- [x] Authentication (API key / internal token / config server basic auth)
+- [x] Upload content verification (magic bytes + PDF inspection)
+- [x] Config value encryption
+
+### Phase 2 — Getting deployable
+
+- [ ] Container images (Tesseract only in the backend image)
+- [ ] Full docker-compose setup
+- [ ] CI (build and test, submodule combination check)
+- [ ] Observability (pending count, processing time, queue saturation, recoveries)
+- [ ] Generated OpenAPI documentation
+
+### Phase 3 — Recognition accuracy
+
+- [ ] Image preprocessing (resolution normalisation, binarisation, deskew)
+- [ ] Word-level Tesseract confidence
+- [ ] `NEEDS_REVIEW` status — separating what a human must look at
+- [ ] Per-page PDF processing
+
+### Phase 4 — Scale
+
+- [ ] S3 storage adapter
+- [ ] Retention policy and cleanup job
+- [ ] Decide on a message queue
+
+### Phase 5 — Structured extraction
+
+- [ ] Document type classification
+- [ ] Structured fields from the recognised text
+- [ ] Compare against a vision-model adapter
+
+<br>
+
+## 📤 Results
+
+> Messages are in Korean because they come straight from the service code.
+
+### Upload → process → query
 
 ```bash
 $ ./scripts/upload-sample.sh scan.png
@@ -207,25 +211,25 @@ $ ./scripts/upload-sample.sh scan.png
 [stub-ocr] 실제 인식이 수행되지 않았습니다.
 ```
 
-### 스케줄러가 자동으로 집어간다
+### The scheduler picks it up on its own
 
-수동 호출 없이 업로드만 하고 기다리면 된다.
+Upload and wait — no manual call needed.
 
 ```
 INFO c.o.a.s.job.PendingDocumentDispatchJob : 대기 문서 접수 완료: queued=1, skipped=0
 ```
 
-### 소유자 격리
+### Owner isolation
 
 ```bash
 $ curl -H "X-API-Key: $BOB_KEY" .../documents/$ALICE_DOC
 {"code":"DOCUMENT_NOT_FOUND","message":"문서를 찾을 수 없습니다: e04fb648-..."}
 ```
 
-같은 파일을 두 소유자가 올리면 **각각 별도 문서**가 된다.
-전역 체크섬이면 남의 문서 ID를 돌려받는다.
+When two owners upload the same file, they each get **their own document.**
+Global checksums would hand back the other owner's document id.
 
-### 형식을 속인 업로드
+### A disguised upload
 
 ```bash
 $ curl -H "X-API-Key: $KEY" -F "file=@evil.png;type=image/png" .../documents
@@ -234,94 +238,94 @@ $ curl -H "X-API-Key: $KEY" -F "file=@evil.png;type=image/png" .../documents
 
 <br>
 
-## 🛠 기술 스택
+## 🛠 Tech Stack
 
-| 영역 | 기술 |
+| Area | Technology |
 |---|---|
-| 언어 | Java 21 |
-| 프레임워크 | Spring Boot 3.5.16 |
-| 설정 관리 | Spring Cloud Config (2025.0.3) |
-| 인증 | Spring Security (API 키 / 공유 토큰 / 기본 인증) |
-| 영속성 | Spring Data JPA, PostgreSQL 16 / H2 |
-| 마이그레이션 | Flyway |
+| Language | Java 21 |
+| Framework | Spring Boot 3.5.16 |
+| Configuration | Spring Cloud Config (2025.0.3) |
+| Authentication | Spring Security (API key / shared token / basic auth) |
+| Persistence | Spring Data JPA, PostgreSQL 16 / H2 |
+| Migration | Flyway |
 | OCR | Tesseract (tess4j 5.20.0) |
-| PDF 검사 | Apache PDFBox |
-| 빌드 | Gradle 8.14.3 |
+| PDF inspection | Apache PDFBox |
+| Build | Gradle 8.14.3 |
 
 <br>
 
-## 🏃 실행 방법
+## 🏃 Getting Started
 
-### 1. 저장소 받기
+### 1. Clone
 
-서브모듈까지 함께 받아야 한다.
+Submodules have to come along.
 
 ```bash
 git clone --recurse-submodules https://github.com/hyunolike/ai.ocr-automation.system.git
 cd ai.ocr-automation.system
 
-# 이미 받았다면
+# already cloned?
 git submodule update --init --recursive
 ```
 
-### 2. 실행
+### 2. Run
 
-**기동 순서가 중요하다.** backend와 scheduler는 설정 서버에서 설정을 받아야 뜬다.
+**Startup order matters.** The backend and the scheduler need configuration before they start.
 
 ```bash
-# (선택) 운영 프로파일로 돌릴 때만 필요. local 프로파일은 H2를 쓴다
+# (optional) only for the production profile; local uses H2
 docker compose up -d postgres
 
-# 터미널 1 — 설정 서버
+# Terminal 1 — config server
 cd config.server && ./gradlew bootRun
 
-# 터미널 2 — 백엔드
+# Terminal 2 — backend
 cd backend && ./gradlew bootRun
 
-# 터미널 3 — 스케줄러
+# Terminal 3 — scheduler
 cd backend.scheduler && ./gradlew bootRun
 ```
 
-기본 프로파일은 `local`이다. **H2 인메모리 + stub OCR 엔진**으로 뜨므로
-PostgreSQL도 Tesseract도 없이 파이프라인 전체를 돌려볼 수 있다.
+The default profile is `local`: **in-memory H2 + the stub OCR engine**, so you can run
+the whole pipeline without PostgreSQL or Tesseract.
 
-### 3. 동작 확인
+### 3. Try it
 
 ```bash
-# API 키가 없으면 내부 경로로 하나 발급받아 진행한다
+# Without an API key it issues one through the internal path first
 ./scripts/upload-sample.sh path/to/scan.png
 
-# 소유자를 바꿔 격리를 확인해 볼 수 있다
+# Change the owner to see isolation at work
 OWNER_ID=alice ./scripts/upload-sample.sh path/to/scan.png
 ```
 
-### 프로파일
+### Profiles
 
-| 프로파일 | DB | OCR 엔진 | 용도 |
+| Profile | Database | OCR engine | Purpose |
 |---|---|---|---|
-| `local` (기본) | H2 (PostgreSQL 모드) | `stub` | 외부 의존 없이 파이프라인 확인 |
-| `default` | PostgreSQL | `tesseract` | 운영 |
+| `local` (default) | H2 (PostgreSQL mode) | `stub` | Run the pipeline with no external dependencies |
+| `default` | PostgreSQL | `tesseract` | Production |
 
-스키마 출처는 두 프로파일 모두 **Flyway 하나**다. JPA는 `validate`만 하므로
-엔티티와 마이그레이션이 어긋나면 기동 단계에서 바로 드러난다.
+Both profiles take the schema from **Flyway alone**, with JPA only `validate`ing,
+so an entity that drifts from a migration shows up right at startup.
 
 <br>
 
-## 📁 저장소 구조
+## 📁 Repository Layout
 
 ```
-ai.ocr-automation.system/          # 이 저장소 (엄브렐라)
-├── config.server/                 # 서브모듈
-├── backend/                       # 서브모듈
-├── backend.scheduler/             # 서브모듈
+ai.ocr-automation.system/          # this repository (umbrella)
+├── config.server/                 # submodule
+├── backend/                       # submodule
+├── backend.scheduler/             # submodule
 ├── docs/
-│   ├── ARCHITECTURE.md            # 경계를 나눈 이유, 상태 머신, 트랜잭션 전략
-│   └── ROADMAP.md                 # 앞으로의 설계, 하지 않기로 한 것
-├── docker-compose.yml             # 로컬 PostgreSQL
-└── scripts/upload-sample.sh       # 동작 확인 스크립트
+│   ├── ARCHITECTURE.md            # why the boundaries, state machine, transaction strategy
+│   └── ROADMAP.md                 # the design ahead, and what we decided not to do
+├── docker-compose.yml             # local PostgreSQL
+└── scripts/upload-sample.sh       # end-to-end check
 ```
 
-서브모듈을 최신으로 맞추려면:
+To bring submodules up to date:
 
 ```bash
 git submodule update --remote --merge
@@ -329,57 +333,58 @@ git submodule update --remote --merge
 
 <br>
 
-## 🤔 설계하며 고민한 점
+## 🤔 Design Decisions
 
-| 주제 | 선택 | 이유 |
+| Topic | Choice | Why |
 |---|---|---|
-| 서비스 분리 | 설정 / 처리 / 스케줄 셋 | Tesseract 의존성을 한곳에 모으고, 처리량이 필요하면 backend만 늘린다 |
-| 저장소 구성 | 독립 저장소 + 서브모듈 | 서비스마다 배포 주기가 다르다. 엄브렐라는 조합을 고정한다 |
-| 처리 방식 | 동기 처리 대신 접수 + 워커 풀 | `배치 크기 × 건당 소요`가 호출자 타임아웃을 넘긴다 |
-| 작업 유실 | 인메모리 큐 + 정체 회수 | 죽어도 문서는 `PROCESSING`이라 회수 잡이 걷어간다. 브로커를 늘리지 않았다 |
-| 엔진·스토리지 | 포트로 끊기 | 초기 구조에서 가장 확실한 것은 나중에 바뀐다는 사실이다 |
-| 인증 수단 | 경로마다 다르게 | 외부 클라이언트·서비스 간·운영은 성격이 다르다. 하나로 묶으면 어느 층도 제대로 안 된다 |
-| 소유자 | `owner_id` 하나로 시작 | `tenant_id` 추가는 마이그레이션 하나지만, 불필요한 테넌트 개념을 걷어내긴 어렵다 |
-| 분산 락 | 보류 | 비동기 접수 이후 중복 호출 비용이 거의 사라졌다. 앞 단계가 뒤 단계의 필요를 없앴다 |
-| 개발 기본값 | 이름 자체를 경고로 | 보이는 위험과 보이지 않는 마찰 중 전자를 골랐다 |
+| Service split | Configuration / processing / scheduling | Keeps the Tesseract dependency in one place; scale only the backend when throughput is needed |
+| Repository layout | Separate repositories + submodules | Services deploy on different cadences. The umbrella pins the combination |
+| Processing model | Acceptance + worker pool instead of synchronous processing | `batch size × per-document time` exceeds the caller's timeout |
+| Lost work | In-memory queue + stall recovery | A crash leaves documents in `PROCESSING`, which the recovery job collects. No broker added |
+| Engine and storage | Behind ports | At the scaffolding stage, the one certainty is that these will change |
+| Authentication | Different per lane | External clients, service-to-service and operations differ. One mechanism serves none of them well |
+| Ownership | Start with `owner_id` alone | Adding `tenant_id` is one migration; removing an unneeded tenant concept is not |
+| Distributed lock | Deferred | Since dispatch became asynchronous, duplicate calls cost almost nothing. The earlier step removed the need for the later one |
+| Development defaults | The name is the warning | Between a visible risk and an invisible friction, we chose the former |
 
 <br>
 
-## ⚠️ 알려진 단순화
+## ⚠️ Known Simplifications
 
-Phase 1까지 끝난 상태다. 파이프라인은 끝까지 동작하고 인증·격리·검증도 들어갔지만,
-실전 적용 전에 해소해야 할 것들이 남아 있다.
+Phase 1 is complete. The pipeline runs end to end with authentication, isolation and
+verification in place, but things remain before real use.
 
-- **HTTPS가 없다** — API 키와 내부 토큰이 평문으로 오간다.
-- **개발 기본 자격증명이 있다** — 쓰이면 기동 경고가 뜨지만, 운영에서 환경변수를 지정하지 않으면 보호가 없다.
-- **운영자 권한이 서비스 간 토큰과 같다** — 스케줄러가 쓰는 토큰으로 API 키도 발급할 수 있다.
-- **컨테이너 이미지가 없다** — 각 서비스에 Dockerfile과 CI가 필요하다.
-- **관측성이 없다** — 처리가 밀리고 있는지 로그로만 알 수 있다.
-- **OCR 신뢰도를 수집하지 않는다** — 결과를 믿어도 되는지 판단할 근거가 없다.
-- **로컬 파일시스템 스토리지** — backend를 다중화하면 파일을 공유하지 못한다.
-- **원본 문서를 정리하지 않는다** — 보관 기간 정책이 없다.
+- **No HTTPS** — the API key and internal token travel in the clear.
+- **Development default credentials exist** — they log a warning when used, but without environment variables in production there is no protection.
+- **Operator rights share the service-to-service token** — the scheduler's token can also mint API keys.
+- **No container images** — each service needs a Dockerfile and CI.
+- **No observability** — whether processing is falling behind is visible only in the log.
+- **OCR confidence isn't collected** — there's no basis for deciding whether to trust a result.
+- **Local filesystem storage** — scaling the backend out means instances can't share files.
+- **Originals are never cleaned up** — there is no retention policy.
 
-서비스별 한계는 각 저장소 README의 "알려진 단순화" 절에 정리해 두었다.
-
-<br>
-
-## 📚 문서
-
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — 경계를 나눈 이유, 포트/어댑터, 상태 머신, 트랜잭션 전략, 인증
-- [docs/ROADMAP.md](docs/ROADMAP.md) — 단계별 설계, 실제로 한 것, **하지 않기로 한 것**
-- 각 서비스 README — 서비스별 상세 설계와 한계
+Per-service limitations are listed under "Known Simplifications" in each repository's README.
 
 <br>
 
-## 🗺 앞으로 구현할 것
+## 📚 Documentation
 
-**다음은 Phase 2 — 배포 가능하게**다. 컨테이너 이미지와 CI가 없어 아직 서버에 올릴 수 없다.
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — why the boundaries, ports and adapters, state machine, transaction strategy, authentication
+- [docs/ROADMAP.md](docs/ROADMAP.md) — staged design, what was actually done, and **what we decided not to do**
+- Each service README — per-service design and limitations
 
-- [ ] Dockerfile + 전체 docker-compose 구성
-- [ ] CI (빌드·테스트 자동화, 서브모듈 조합 검증)
-- [ ] 관측성 — 대기 문서 수, 처리 시간, 큐 포화, 회수 건수
-- [ ] OpenAPI 문서 자동 생성
-- [ ] HTTPS 종단과 운영자 권한 분리
-- [ ] 이미지 전처리와 신뢰도 기반 `NEEDS_REVIEW`
-- [ ] S3 스토리지 어댑터
-- [ ] 문서 보관 기간 정책과 정리 배치
+<br>
+
+## 🗺 Roadmap
+
+**Next is Phase 2 — getting deployable.** Without container images and CI, this can't
+go on a server yet.
+
+- [ ] Dockerfiles + a full docker-compose setup
+- [ ] CI (build and test, submodule combination check)
+- [ ] Observability — pending count, processing time, queue saturation, recoveries
+- [ ] Generated OpenAPI documentation
+- [ ] HTTPS termination and operator rights separation
+- [ ] Image preprocessing and a confidence-based `NEEDS_REVIEW`
+- [ ] S3 storage adapter
+- [ ] Retention policy and cleanup job
