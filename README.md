@@ -170,6 +170,7 @@ ai.ocr-automation.system/          # 이 저장소 (엄브렐라)
 ├── backend/                       # 서브모듈
 ├── backend.scheduler/             # 서브모듈
 ├── docs/ARCHITECTURE.md           # 설계 결정과 배경
+├── docs/ROADMAP.md                # 앞으로의 설계 (단계별 계획)
 ├── docker-compose.yml             # 로컬 PostgreSQL
 └── scripts/upload-sample.sh       # 동작 확인 스크립트
 ```
@@ -185,6 +186,7 @@ git submodule update --remote --merge
 ## 📚 문서
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — 경계를 이렇게 나눈 이유, 상태 머신, 트랜잭션 전략
+- [docs/ROADMAP.md](docs/ROADMAP.md) — **앞으로의 설계.** 현재 결함, 단계별 계획, 하지 않기로 한 것
 - 각 서비스 README — 서비스별 상세 설계와 한계
 
 <br>
@@ -207,10 +209,16 @@ git submodule update --remote --merge
 
 ## 🗺 로드맵
 
-- [ ] 서비스 간 인증과 API 인증
-- [ ] Dockerfile + 전체 docker-compose 구성
-- [ ] CI (빌드·테스트 자동화)
-- [ ] ShedLock 으로 스케줄러 다중화 대비
-- [ ] 설정 값 암호화, 설정 전용 저장소 분리
-- [ ] S3 스토리지 어댑터
-- [ ] 문서 보관 기간 정책과 정리 배치
+단계별 설계는 [docs/ROADMAP.md](docs/ROADMAP.md) 에 있다. 요약하면:
+
+| Phase | 목표 | 주요 항목 |
+|---|---|---|
+| **0** | 확인된 결함 수정 | 배치 처리가 스케줄러 타임아웃을 넘는 문제 외 3건 |
+| **1** | 운영 투입 차단 해소 | 파이프라인 비동기화, 소유자 도입, 인증·인가, 파일 검증, 설정 암호화 |
+| **2** | 배포 가능하게 | 컨테이너 이미지, CI, 관측성, API 문서 |
+| **3** | 인식 정확도 | 이미지 전처리, 신뢰도 수집, `NEEDS_REVIEW` 상태, PDF 페이지 처리 |
+| **4** | 규모 | S3 어댑터, 보관 정책, 큐 전환 판단 |
+| **5** | 구조화 추출 | 텍스트가 아니라 데이터를 준다 |
+
+**다음에 할 일은 Phase 0 의 결함 수정**이다. 특히 배치 처리가 순차로 돌아
+스케줄러 읽기 타임아웃(60초)을 넘기는 문제는 지금도 재현된다.
