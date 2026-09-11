@@ -1,0 +1,27 @@
+# 로컬에서 PostgreSQL 만 띄운다.
+# 애플리케이션 세 개는 각 저장소에서 ./gradlew bootRun 으로 실행한다
+# (기동 순서: config.server → backend → scheduler).
+#
+# 전체를 컨테이너로 띄우는 구성은 각 서비스에 Dockerfile 을 추가한 뒤에 다룬다.
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ocr-postgres
+    environment:
+      POSTGRES_DB: ocr
+      POSTGRES_USER: ocr
+      POSTGRES_PASSWORD: ocr
+      # 한글 문서를 다루므로 콜레이션을 명시한다
+      LANG: ko_KR.utf8
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ocr -d ocr"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres-data:

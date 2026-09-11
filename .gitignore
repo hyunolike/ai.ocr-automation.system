@@ -1,0 +1,11 @@
+# OS
+.DS_Store
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# 로컬 실행 산출물
+.local-storage/
+*.log
