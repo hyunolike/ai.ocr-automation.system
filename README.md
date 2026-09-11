@@ -112,6 +112,9 @@ PostgreSQL 도 Tesseract 도 없이 파이프라인 전체를 돌려볼 수 있�
 
 ```bash
 ./scripts/upload-sample.sh path/to/scan.png
+
+# 소유자를 바꿔 격리를 확인해 볼 수 있다
+OWNER_ID=alice ./scripts/upload-sample.sh path/to/scan.png
 ```
 
 업로드 → 처리 → 상태 → 추출 텍스트까지 한 번에 보여준다.
@@ -143,6 +146,9 @@ SPRING_PROFILES_ACTIVE=default ./gradlew bootRun
 | `GET` | `/api/v1/documents/{id}` | 상태·결과 요약 |
 | `GET` | `/api/v1/documents?status=` | 목록 (상태 필터) |
 | `GET` | `/api/v1/documents/{id}/text` | 추출된 전체 텍스트 |
+
+모든 공개 API 는 `X-Owner-Id` 헤더를 요구한다.
+**이 헤더는 인증이 아니라** 소유자 격리를 위한 자리표시자이며, Phase 1.3 에서 교체된다.
 
 자세한 내용은 [backend README](https://github.com/hyunolike/ai.ocr-automation.system-backend#-api) 참고.
 
@@ -196,7 +202,7 @@ git submodule update --remote --merge
 **초기 구조를 잡은 상태다.** 파이프라인은 끝까지 동작하지만,
 실사용 전에 해결해야 할 것들이 남아 있다.
 
-- **인증·인가가 전혀 없다** — 공개 API, `/internal` API, 설정 서버 모두 열려 있다
+- **인증이 없다** — 소유자 격리는 들어왔지만 `X-Owner-Id` 헤더를 그대로 믿는다. `/internal` API 와 설정 서버도 열려 있다
 - **스케줄러 다중화 시 잡이 중복 실행된다** — 분산 락(ShedLock)이 없다
 - **설정 값이 평문이다** — DB 비밀번호 암호화(`{cipher}`)가 없다
 - **컨테이너 이미지가 없다** — 각 서비스에 Dockerfile 과 CI 가 필요하다
@@ -214,11 +220,12 @@ git submodule update --remote --merge
 | Phase | 목표 | 주요 항목 |
 |---|---|---|
 | ~~**0**~~ | ~~확인된 결함 수정~~ | ✅ 완료 — 배치 타임아웃 초과 외 3건 |
-| **1** | 운영 투입 차단 해소 | ~~파이프라인 비동기화~~ ✅, **소유자 도입 ← 다음**, 인증·인가, 파일 검증, 설정 암호화 |
+| **1** | 운영 투입 차단 해소 | ~~파이프라인 비동기화~~ ✅, ~~소유자 도입~~ ✅, **인증·인가 ← 다음**, 파일 검증, 설정 암호화 |
 | **2** | 배포 가능하게 | 컨테이너 이미지, CI, 관측성, API 문서 |
 | **3** | 인식 정확도 | 이미지 전처리, 신뢰도 수집, `NEEDS_REVIEW` 상태, PDF 페이지 처리 |
 | **4** | 규모 | S3 어댑터, 보관 정책, 큐 전환 판단 |
 | **5** | 구조화 추출 | 텍스트가 아니라 데이터를 준다 |
 
-**다음에 할 일은 1.2 소유자 도입**이다. 지금 `GET /api/v1/documents` 는 시스템의
-모든 문서를 돌려주며, 인증을 붙인다고 해결되지 않는다 — 도메인에 소유자 개념이 없다.
+**다음에 할 일은 1.3 인증·인가**다. 소유자 격리는 들어왔지만 소유자를 *증명*하는
+장치가 없다 — 지금은 `X-Owner-Id` 헤더를 그대로 믿는다. `/internal` API 도 공개 포트에
+열려 있어 누구나 배치를 돌릴 수 있다.

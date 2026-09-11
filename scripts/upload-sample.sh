@@ -6,8 +6,12 @@ set -euo pipefail
 BACKEND="${BACKEND_BASE_URL:-http://localhost:8080}"
 FILE="${1:?업로드할 파일 경로를 넘겨주세요 (예: ./scripts/upload-sample.sh scan.png)}"
 
-echo "▶ 업로드: ${FILE}"
-RESPONSE=$(curl -sS -F "file=@${FILE}" "${BACKEND}/api/v1/documents")
+# 공개 API 는 소유자 헤더를 요구한다.
+# ⚠️ 이것은 인증이 아니다 — 누구나 보낼 수 있는 자리표시자이며 Phase 1.3 에서 교체된다.
+OWNER="${OWNER_ID:-demo}"
+
+echo "▶ 업로드: ${FILE} (소유자: ${OWNER})"
+RESPONSE=$(curl -sS -H "X-Owner-Id: ${OWNER}" -F "file=@${FILE}" "${BACKEND}/api/v1/documents")
 echo "${RESPONSE}"
 
 DOC_ID=$(echo "${RESPONSE}" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
@@ -17,16 +21,16 @@ if [ -z "${DOC_ID}" ]; then
 fi
 
 echo
-echo "▶ OCR 처리 요청 (평소에는 스케줄러가 호출한다)"
+echo "▶ OCR 처리 접수 (평소에는 스케줄러가 호출한다. 내부 API 는 소유자를 가리지 않는다)"
 curl -sS -X POST "${BACKEND}/internal/v1/ocr/process-pending"
 
 echo
 echo
 echo "▶ 상태: ${DOC_ID}"
-curl -sS "${BACKEND}/api/v1/documents/${DOC_ID}"
+curl -sS -H "X-Owner-Id: ${OWNER}" "${BACKEND}/api/v1/documents/${DOC_ID}"
 
 echo
 echo
 echo "▶ 추출 텍스트"
-curl -sS "${BACKEND}/api/v1/documents/${DOC_ID}/text"
+curl -sS -H "X-Owner-Id: ${OWNER}" "${BACKEND}/api/v1/documents/${DOC_ID}/text"
 echo
